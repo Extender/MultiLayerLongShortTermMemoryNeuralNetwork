@@ -1,18 +1,18 @@
-#include "lstmlayerstate.h"
+#include "lstmstate.h"
 
-double LSTMLayerState::sig(double input)
+double LSTMState::sig(double input)
 {
     // Derivative: sig(input)*(1.0-sig(input))
     return 1.0/(1.0+pow(M_E,-input));
 }
 
-double LSTMLayerState::tanh(double input)
+double LSTMState::tanh(double input)
 {
     // Derivative: 1.0-((tanh(input))^2)
     return (1.0-pow(M_E,-2.0*input))/(1.0+pow(M_E,-2.0*input));
 }
 
-LSTMLayerState::LSTMLayerState(LSTMLayerState *copyFrom,uint32_t _inputCount,uint32_t _outputCount,uint32_t _hiddenLayerCount,uint32_t *_hiddenLayerNeuronCounts)
+LSTMState::LSTMState(LSTMState *copyFrom,uint32_t _inputCount,uint32_t _outputCount,uint32_t _hiddenLayerCount,uint32_t *_hiddenLayerNeuronCounts)
 {
     bool copy=copyFrom!=0;
     inputCount=copy?copyFrom->inputCount:_inputCount;
@@ -243,7 +243,7 @@ LSTMLayerState::LSTMLayerState(LSTMLayerState *copyFrom,uint32_t _inputCount,uin
     }
 }
 
-void LSTMLayerState::calculateGatePreValues(double *previousOutputs)
+void LSTMState::calculateGatePreValues(double *previousOutputs)
 {
     // Inputs used: "input"; previous outputs used: "previousOutputs"
     // First layer: inputs and previous outputs
@@ -336,7 +336,7 @@ void LSTMLayerState::calculateGatePreValues(double *previousOutputs)
     }
 }
 
-void LSTMLayerState::freeMemory()
+void LSTMState::freeMemory()
 {
     for(uint32_t cell=0;cell<outputCount;cell++)
     {
@@ -416,7 +416,7 @@ void LSTMLayerState::freeMemory()
     free(hiddenLayerNeuronCounts);
 }
 
-LSTMLayerState::~LSTMLayerState()
+LSTMState::~LSTMState()
 {
     freeMemory();
 }

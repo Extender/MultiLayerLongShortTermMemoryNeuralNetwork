@@ -9,12 +9,12 @@ TEMPLATE = app
 SOURCES += main.cpp \
     io.cpp \
     text.cpp \
-    lstmlayer.cpp \
-    lstmlayerstate.cpp
+    lstm.cpp \
+    lstmstate.cpp
 
 HEADERS += \
     io.h \
     text.h \
-    lstmlayer.h \
-    lstmlayerstate.h
+    lstm.h \
+    lstmstate.h
 

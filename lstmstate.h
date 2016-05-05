@@ -1,5 +1,5 @@
-#ifndef LSTMLAYERSTATE_H
-#define LSTMLAYERSTATE_H
+#ifndef LSTMSTATE_H
+#define LSTMSTATE_H
 
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
@@ -11,7 +11,7 @@
 #include <math.h>
 #include <time.h>
 
-class LSTMLayerState
+class LSTMState
 {
 public:
     // Dimensions: Cells - layers - neurons in this layer - weights from neurons in previous layer to neurons in this layer
@@ -63,10 +63,10 @@ public:
     static double sig(double input); // sigmoid function
     static double tanh(double input); // tanh function
 
-    LSTMLayerState(LSTMLayerState *copyFrom=0,uint32_t _inputCount=0,uint32_t _outputCount=0,uint32_t _hiddenLayerCount=0,uint32_t *_hiddenLayerNeuronCounts=0);
+    LSTMState(LSTMState *copyFrom=0,uint32_t _inputCount=0,uint32_t _outputCount=0,uint32_t _hiddenLayerCount=0,uint32_t *_hiddenLayerNeuronCounts=0);
     void calculateGatePreValues(double *previousOutputs); // Takes "input" and calculates the values to be multiplied by the weights of the gates (in single-layer LSTM: inputGateWeights[cell][i]*input[i]; here: inputGatePreValues[cell][i]).
     void freeMemory();
-    ~LSTMLayerState();
+    ~LSTMState();
 };
 
-#endif // LSTMLAYERSTATE_H
+#endif // LSTMSTATE_H

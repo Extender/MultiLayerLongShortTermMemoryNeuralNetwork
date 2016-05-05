@@ -1,18 +1,18 @@
-#include "lstmlayer.h"
+#include "lstm.h"
 
-double LSTMLayer::sig(double input)
+double LSTM::sig(double input)
 {
     // Derivative: sig(input)*(1.0-sig(input))
     return 1.0/(1.0+pow(M_E,-input));
 }
 
-double LSTMLayer::tanh(double input)
+double LSTM::tanh(double input)
 {
     // Derivative: 1.0-((tanh(input))^2)
     return (1.0-pow(M_E,-2.0*input))/(1.0+pow(M_E,-2.0*input));
 }
 
-double *LSTMLayer::cloneDoubleArray(double *array, uint32_t size)
+double *LSTM::cloneDoubleArray(double *array, uint32_t size)
 {
     size_t arraySize=size*sizeof(double);
     double *out=(double*)malloc(arraySize);
@@ -20,7 +20,7 @@ double *LSTMLayer::cloneDoubleArray(double *array, uint32_t size)
     return out;
 }
 
-double *LSTMLayer::mergeDoubleArrays(double *array1, uint32_t size1, double *array2, uint32_t size2)
+double *LSTM::mergeDoubleArrays(double *array1, uint32_t size1, double *array2, uint32_t size2)
 {
     size_t array1Size=size1*sizeof(double);
     size_t array2Size=size2*sizeof(double);
@@ -31,7 +31,7 @@ double *LSTMLayer::mergeDoubleArrays(double *array1, uint32_t size1, double *arr
     return out;
 }
 
-double *LSTMLayer::multiplyDoubleArrayByDoubleArray(double *array1, uint32_t size, double *array2)
+double *LSTM::multiplyDoubleArrayByDoubleArray(double *array1, uint32_t size, double *array2)
 {
     double *out=cloneDoubleArray(array1,size);
     for(uint32_t i=0;i<size;i++)
@@ -39,7 +39,7 @@ double *LSTMLayer::multiplyDoubleArrayByDoubleArray(double *array1, uint32_t siz
     return out;
 }
 
-double *LSTMLayer::multiplyDoubleArray(double *array, uint32_t size, double factor)
+double *LSTM::multiplyDoubleArray(double *array, uint32_t size, double factor)
 {
     double *out=cloneDoubleArray(array,size);
     for(uint32_t i=0;i<size;i++)
@@ -47,7 +47,7 @@ double *LSTMLayer::multiplyDoubleArray(double *array, uint32_t size, double fact
     return out;
 }
 
-double *LSTMLayer::addToDoubleArray(double *array, uint32_t size, double summand)
+double *LSTM::addToDoubleArray(double *array, uint32_t size, double summand)
 {
     double *out=cloneDoubleArray(array,size);
     for(uint32_t i=0;i<size;i++)
@@ -55,7 +55,7 @@ double *LSTMLayer::addToDoubleArray(double *array, uint32_t size, double summand
     return out;
 }
 
-double LSTMLayer::sumDoubleArray(double *array, uint32_t size)
+double LSTM::sumDoubleArray(double *array, uint32_t size)
 {
     double out=0.0;
     for(uint32_t i=0;i<size;i++)
@@ -63,90 +63,90 @@ double LSTMLayer::sumDoubleArray(double *array, uint32_t size)
     return out;
 }
 
-void LSTMLayer::directlyMultiplyDoubleArrayByDoubleArray(double *array1, uint32_t size, double *array2)
+void LSTM::directlyMultiplyDoubleArrayByDoubleArray(double *array1, uint32_t size, double *array2)
 {
     for(uint32_t i=0;i<size;i++)
         array1[i]*=array2[i];
 }
 
-void LSTMLayer::directlyMultiplyDoubleArray(double *array, uint32_t size, double factor)
+void LSTM::directlyMultiplyDoubleArray(double *array, uint32_t size, double factor)
 {
     for(uint32_t i=0;i<size;i++)
         array[i]*=factor;
 }
 
-void LSTMLayer::directlyAddToDoubleArray(double *array, uint32_t size, double summand)
+void LSTM::directlyAddToDoubleArray(double *array, uint32_t size, double summand)
 {
     for(uint32_t i=0;i<size;i++)
         array[i]+=summand;
 }
 
-void LSTMLayer::fillDoubleArray(double *array, uint32_t size, double value)
+void LSTM::fillDoubleArray(double *array, uint32_t size, double value)
 {
     for(uint32_t i=0;i<size;i++)
         array[i]=value;
 }
 
-void LSTMLayer::fillDoubleArrayWithRandomValues(double *array, uint32_t size, double from, double to)
+void LSTM::fillDoubleArrayWithRandomValues(double *array, uint32_t size, double from, double to)
 {
     srand(time(NULL));
     for(uint32_t i=0;i<size;i++)
         array[i]=from+((double)rand()/(double)RAND_MAX)*(to-from);
 }
 
-LSTMLayerState *LSTMLayer::pushLayerState()
+LSTMState *LSTM::pushState()
 {
     // This works as follows: the buffer is larger (usually 2 times larger) than the required size, allowing us to avoid having to move memory
     // every time a new state is pushed. Once the buffer is filled, the needed elements in the front are moved back, overriding the old states
     // that aren't needed anymore, and creating room for new states to be pushed.
 
-    if(layerStateArrayPos==0xffffffff)
-        layerStateArrayPos=0; // Do not increment the position the first time pushLayerState() is called.
+    if(stateArrayPos==0xffffffff)
+        stateArrayPos=0; // Do not increment the position the first time pushLayerState() is called.
     else
     {
-        if(layerStateArrayPos==layerStateArraySize-1)
+        if(stateArrayPos==stateArraySize-1)
         {
             // Overwrite old states that aren't needed anymore, and set the new position:
             // Note that the current state will be a backpropagation state after the new state is pushed to the array.
-            delete layerStates[layerStateArrayPos-backpropagationSteps]; // Delete unneeded state
-            memcpy(layerStates,layerStates+(layerStateArraySize-backpropagationSteps),backpropagationSteps*sizeof(LSTMLayerState*));
-            layerStateArrayPos=backpropagationSteps-1;
+            delete states[stateArrayPos-backpropagationSteps]; // Delete unneeded state
+            memcpy(states,states+(stateArraySize-backpropagationSteps),backpropagationSteps*sizeof(LSTMState*));
+            stateArrayPos=backpropagationSteps-1;
         }
-        layerStateArrayPos++;
+        stateArrayPos++;
     }
     // Copy values from previous state, if such a state exists:
-    LSTMLayerState *newState=layerStateArrayPos>0/*Has previous state?*/?new LSTMLayerState(getLayerState(1)):new LSTMLayerState(0,inputCount,outputCount,hiddenLayerCount,hiddenLayerNeuronCounts);
-    layerStates[layerStateArrayPos]=newState;
-    if(layerStateArrayPos>backpropagationSteps)
+    LSTMState *newState=stateArrayPos>0/*Has previous state?*/?new LSTMState(getLayerState(1)):new LSTMState(0,inputCount,outputCount,hiddenLayerCount,hiddenLayerNeuronCounts);
+    states[stateArrayPos]=newState;
+    if(stateArrayPos>backpropagationSteps)
     {
         // Free memory occupied by the now unneeded state (each time a new state is pushed, the memory occupied by the oldest state, which is
         // not needed anymore from that point on, is freed):
-        delete layerStates[layerStateArrayPos-backpropagationSteps-1];
+        delete states[stateArrayPos-backpropagationSteps-1];
     }
-    return layerStates[layerStateArrayPos];
+    return states[stateArrayPos];
 }
 
-LSTMLayerState *LSTMLayer::getCurrentLayerState()
+LSTMState *LSTM::getCurrentLayerState()
 {
-    return layerStates[layerStateArrayPos];
+    return states[stateArrayPos];
 }
 
-bool LSTMLayer::hasLayerState(uint32_t stepsBack)
+bool LSTM::hasLayerState(uint32_t stepsBack)
 {
-    return layerStateArrayPos!=0xffffffff&&stepsBack<=__min(backpropagationSteps,layerStateArrayPos);
+    return stateArrayPos!=0xffffffff&&stepsBack<=__min(backpropagationSteps,stateArrayPos);
 }
 
-uint32_t LSTMLayer::getAvailableStepsBack()
+uint32_t LSTM::getAvailableStepsBack()
 {
-    return layerStateArrayPos!=0xffffffff?__min(backpropagationSteps,layerStateArrayPos):0;
+    return stateArrayPos!=0xffffffff?__min(backpropagationSteps,stateArrayPos):0;
 }
 
-LSTMLayerState *LSTMLayer::getLayerState(uint32_t stepsBack)
+LSTMState *LSTM::getLayerState(uint32_t stepsBack)
 {
-    return layerStates[layerStateArrayPos-stepsBack];
+    return states[stateArrayPos-stepsBack];
 }
 
-LSTMLayer::LSTMLayer(uint32_t _inputCount, uint32_t _outputCount, uint32_t _backpropagationSteps, double _learningRate, uint32_t _hiddenLayerCount, uint32_t *_hiddenLayerNeuronCounts)
+LSTM::LSTM(uint32_t _inputCount, uint32_t _outputCount, uint32_t _backpropagationSteps, double _learningRate, uint32_t _hiddenLayerCount, uint32_t *_hiddenLayerNeuronCounts)
 {
     inputCount=_inputCount;
     outputCount=_outputCount;
@@ -154,9 +154,9 @@ LSTMLayer::LSTMLayer(uint32_t _inputCount, uint32_t _outputCount, uint32_t _back
     backpropagationSteps=_backpropagationSteps;
     learningRate=_learningRate;
 
-    layerStateArraySize=2*backpropagationSteps+1 /*One for the current state.*/;
-    layerStateArrayPos=0xffffffff;
-    layerStates=(LSTMLayerState**)malloc(layerStateArraySize*sizeof(LSTMLayerState*));
+    stateArraySize=2*backpropagationSteps+1 /*One for the current state.*/;
+    stateArrayPos=0xffffffff;
+    states=(LSTMState**)malloc(stateArraySize*sizeof(LSTMState*));
 
     hiddenLayerCount=_hiddenLayerCount;
     totalLayerCount=hiddenLayerCount+1;
@@ -173,20 +173,20 @@ LSTMLayer::LSTMLayer(uint32_t _inputCount, uint32_t _outputCount, uint32_t _back
         memcpy(hiddenLayerNeuronCounts,_hiddenLayerNeuronCounts,hiddenLayerNeuronCountArraySize);
 }
 
-LSTMLayer::~LSTMLayer()
+LSTM::~LSTM()
 {
-    for(uint32_t layer=layerStateArrayPos-backpropagationSteps;layer<=layerStateArrayPos;layer++)
-        delete layerStates[layer];
-    free(layerStates);
+    for(uint32_t layer=stateArrayPos-backpropagationSteps;layer<=stateArrayPos;layer++)
+        delete states[layer];
+    free(states);
     free(hiddenLayerNeuronCounts);
 }
 
-double *LSTMLayer::process(double *input)
+double *LSTM::process(double *input)
 {
-    LSTMLayerState *l=pushLayerState();
+    LSTMState *l=pushState();
     memcpy(l->input,input,inputCount*sizeof(double)); // Store for backpropagation
     bool hasPreviousLayerState=hasLayerState(1);
-    LSTMLayerState *previousLayerState=hasPreviousLayerState?getLayerState(1):0;
+    LSTMState *previousLayerState=hasPreviousLayerState?getLayerState(1):0;
     double *output=(double*)malloc(outputCount*sizeof(double));
     for(uint32_t cell=0;cell<outputCount;cell++)
     {
@@ -255,7 +255,7 @@ double *LSTMLayer::process(double *input)
     return output;
 }
 
-void LSTMLayer::learn(double **desiredOutputs)
+void LSTM::learn(double **desiredOutputs)
 {
     // Check for any non-initialized arrays
 
@@ -295,18 +295,18 @@ void LSTMLayer::learn(double **desiredOutputs)
     bool weightsAllocated=false;
     uint32_t inputAndOutputCount=inputCount+outputCount;
 
-    LSTMLayerState *latestLayerState=getCurrentLayerState();
+    LSTMState *latestLayerState=getCurrentLayerState();
 
     // This will cycle totalStepCount times, but we need to go backwards, so we use "stepsBack" in combination with "getLayerState(stepsBack)".
 
     for(uint32_t stepsBack=0;stepsBack<=availableStepsBack;stepsBack++)
     {
         // 0 = current layer state
-        LSTMLayerState *thisState=getLayerState(stepsBack);
+        LSTMState *thisState=getLayerState(stepsBack);
         bool hasDeeperState=stepsBack<availableStepsBack; // Or hasNext? Should we use the next value instead?
         bool hasHigherState=stepsBack>0; // Or hasNext? Should we use the next value instead?
-        LSTMLayerState *deeperState=hasDeeperState?getLayerState(stepsBack+1):0;
-        LSTMLayerState *higherState=hasHigherState?getLayerState(stepsBack-1):0;
+        LSTMState *deeperState=hasDeeperState?getLayerState(stepsBack+1):0;
+        LSTMState *higherState=hasHigherState?getLayerState(stepsBack-1):0;
         double *_ds=(double*)malloc(outputCount*sizeof(double));
         double *_do=(double*)malloc(outputCount*sizeof(double));
         double *_di=(double*)malloc(outputCount*sizeof(double));

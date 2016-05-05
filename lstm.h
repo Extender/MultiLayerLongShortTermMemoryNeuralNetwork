@@ -13,16 +13,16 @@
 #include <iostream>
 
 #include "text.h"
-#include "lstmlayerstate.h"
+#include "lstmstate.h"
 
 using namespace std;
 
-class LSTMLayer // A LSTM layer in time (can contain sub-layers)
+class LSTM
 {
 public:
-    uint32_t layerStateArrayPos;
-    uint32_t layerStateArraySize;
-    LSTMLayerState **layerStates; // Stores previous iterations
+    uint32_t stateArrayPos;
+    uint32_t stateArraySize;
+    LSTMState **states; // Stores previous iterations
 
     double learningRate;
     uint32_t inputCount;
@@ -47,16 +47,16 @@ public:
     static void fillDoubleArray(double *array,uint32_t size,double value);
     static void fillDoubleArrayWithRandomValues(double *array,uint32_t size,double from,double to);
 
-    LSTMLayerState *pushLayerState();
-    LSTMLayerState *getCurrentLayerState();
+    LSTMState *pushState();
+    LSTMState *getCurrentLayerState();
     bool hasLayerState(uint32_t stepsBack);
     uint32_t getAvailableStepsBack();
-    LSTMLayerState *getLayerState(uint32_t stepsBack);
+    LSTMState *getLayerState(uint32_t stepsBack);
 
     // Please note that the cell count is equal to the output count!
     // To have more cells than outputs (essential in most situations, as it makes the network more powerful), you should use the first n required output values only!
-    LSTMLayer(uint32_t _inputCount,uint32_t _outputCount,uint32_t _backpropagationSteps,double _learningRate,uint32_t hiddenLayerCount=0,uint32_t *_hiddenLayerNeuronCounts=0);
-    ~LSTMLayer();
+    LSTM(uint32_t _inputCount,uint32_t _outputCount,uint32_t _backpropagationSteps,double _learningRate,uint32_t hiddenLayerCount=0,uint32_t *_hiddenLayerNeuronCounts=0);
+    ~LSTM();
 
     double *process(double *input);
     // Takes in the desired outputs of the last n=backpropagationSteps states and the current state, beginning with the oldest state and ending with the current state.
