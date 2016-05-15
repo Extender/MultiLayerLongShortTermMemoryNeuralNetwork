@@ -8,7 +8,7 @@ double LSTM::sig(double input)
 
 double LSTM::tanh(double input)
 {
-    // Derivative: 1.0-((tanh(input))^2)
+    // Derivative: 1.0-pow(tanh(input),2.0)
     return (1.0-pow(M_E,-2.0*input))/(1.0+pow(M_E,-2.0*input));
 }
 
@@ -303,19 +303,19 @@ void LSTM::learn(double **desiredOutputs)
     {
         // 0 = current state
         LSTMState *thisState=getState(stepsBack);
-        bool hasDeeperState=stepsBack<availableStepsBack; // Or hasNext? Should we use the next value instead?
-        bool hasHigherState=stepsBack>0; // Or hasNext? Should we use the next value instead?
+        bool hasDeeperState=stepsBack<availableStepsBack;
+        bool hasHigherState=stepsBack>0;
         LSTMState *deeperState=hasDeeperState?getState(stepsBack+1):0;
         LSTMState *higherState=hasHigherState?getState(stepsBack-1):0;
-        double *_ds=(double*)malloc(outputCount*sizeof(double));
-        double *_do=(double*)malloc(outputCount*sizeof(double));
-        double *_di=(double*)malloc(outputCount*sizeof(double));
-        double *_dg=(double*)malloc(outputCount*sizeof(double));
-        double *_df=(double*)malloc(outputCount*sizeof(double));
-        double *_di_input=(double*)malloc(outputCount*sizeof(double));
-        double *_df_input=(double*)malloc(outputCount*sizeof(double));
-        double *_do_input=(double*)malloc(outputCount*sizeof(double));
-        double *_dg_input=(double*)malloc(outputCount*sizeof(double));
+        double *_ds=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the cell states
+        double *_do=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the output gate values
+        double *_di=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the input gate values
+        double *_dg=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the candidate gate values
+        double *_df=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the forget gate values
+        double *_di_input=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the values inside the activation function calls of the input gates (e.g. tanh(x) <- x)
+        double *_df_input=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the values inside the activation function calls of the forget gates (e.g. tanh(x) <- x)
+        double *_do_input=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the values inside the activation function calls of the output gates (e.g. tanh(x) <- x)
+        double *_dg_input=(double*)malloc(outputCount*sizeof(double)); // Derivative of the loss function w.r.t. the values inside the activation function calls of the candidate gates (e.g. tanh(x) <- x)
         // top_diff_is: diff_h = s->bottom_diff_h
         // top_diff_is: diff_s = higherState->bottom_diff_s (topmost: 0)
 
@@ -335,28 +335,28 @@ void LSTM::learn(double **desiredOutputs)
 
 
         // What we need to do is to calculate the derivative of the loss function w.r.t. the biases of the gates,
-        // and the weights and biases of the four feedforward neural networks.
+        // and the weights and biases of the four feedforward neural networks
 
-        double *dxc=(double*)malloc((inputAndOutputCount)*sizeof(double)); // Derivative of loss function with respect to each single input/previous output value.
+        double *dxc=(double*)malloc((inputAndOutputCount)*sizeof(double)); // Derivative of loss function with respect to each single input/previous output value
         bool dxcWeightsSet=false;
 
         for(uint32_t cell=0;cell<outputCount;cell++)
         {
             // For each cell:
             double diff_s=hasHigherState?higherState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToCellStates[cell]:0.0;
-            double diff_h=2.0*(thisState->output[cell]-desiredOutputs[availableStepsBack-stepsBack][cell]); // Taken from bottom_diff, may not be correct!
+            double diff_h=2.0*(thisState->output[cell]-desiredOutputs[availableStepsBack-stepsBack][cell]);
             if(hasHigherState)
                 diff_h+=higherState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToOutputs[cell];
 
-            _ds[cell]=thisState->outputGateValues[cell]*diff_h+diff_s; // Derivative of the loss function w.r.t. the cell states
-            _do[cell]=thisState->cellStates[cell]*diff_h; // Derivative of the loss function w.r.t. the output gate's value
-            _di[cell]=thisState->candidateGateValues[cell]*_ds[cell]; // Derivative of the loss function w.r.t. the input gate's value
-            _dg[cell]=thisState->inputGateValues[cell]*_ds[cell]; // Derivative of the loss function w.r.t. the candidate gate's value
-            _df[cell]=(hasDeeperState?deeperState->cellStates[cell]:0.0)*_ds[cell]; // Derivative of the loss function w.r.t. the forget gate's value
-            _di_input[cell]=(1.0-thisState->inputGateValues[cell])*thisState->inputGateValues[cell]*_di[cell]; // Derivative of the loss function w.r.t. the value inside the sigmoid function of the input gate
-            _df_input[cell]=(1.0-thisState->forgetGateValues[cell])*thisState->forgetGateValues[cell]*_df[cell]; // Derivative of the loss function w.r.t. the value inside the sigmoid function of the forget gate
-            _do_input[cell]=(1.0-thisState->outputGateValues[cell])*thisState->outputGateValues[cell]*_do[cell]; // Derivative of the loss function w.r.t. the value inside the sigmoid function of the output gate
-            _dg_input[cell]=(1.0-pow(thisState->candidateGateValues[cell],2.0))*_dg[cell]; // Derivative of the loss function w.r.t. the value inside the tanh function of the forget gate
+            _ds[cell]=thisState->outputGateValues[cell]*diff_h+diff_s;
+            _do[cell]=thisState->cellStates[cell]*diff_h;
+            _di[cell]=thisState->candidateGateValues[cell]*_ds[cell];
+            _dg[cell]=thisState->inputGateValues[cell]*_ds[cell];
+            _df[cell]=(hasDeeperState?deeperState->cellStates[cell]:0.0)*_ds[cell];
+            _di_input[cell]=(1.0-thisState->inputGateValues[cell])*thisState->inputGateValues[cell]*_di[cell];
+            _df_input[cell]=(1.0-thisState->forgetGateValues[cell])*thisState->forgetGateValues[cell]*_df[cell];
+            _do_input[cell]=(1.0-thisState->outputGateValues[cell])*thisState->outputGateValues[cell]*_do[cell];
+            _dg_input[cell]=(1.0-pow(thisState->candidateGateValues[cell],2.0))*_dg[cell];
 
             if(!weightsAllocated)
             {
@@ -484,11 +484,11 @@ void LSTM::learn(double **desiredOutputs)
                 }
             }
 
-            // Adjust dxc (CHECK THIS)!
+            // Calculate derivatives of loss function w.r.t. the inputs received from the last state
 
             // The bottommost layer has the inputs/outputs of the cell as its inputs.
             // The bottommost layer's weights are used to feed in the inputs into the bottommost layer of the neural network (by multiplying them by the bottommost layer's weights).
-            // => Calculate error term of bottommost layer.
+            // => Calculate error term of bottommost layer
 
             double i_errorTermSum=0.0;
             double f_errorTermSum=0.0;
@@ -501,17 +501,15 @@ void LSTM::learn(double **desiredOutputs)
 
             for(uint32_t neuronInBottommostLayer=0;neuronInBottommostLayer<neuronsInBottommostLayer;neuronInBottommostLayer++)
             {
-                // CHECK THIS AGAIN:
                 for(uint32_t weightInputOrOutput=0;weightInputOrOutput<inputAndOutputCount;weightInputOrOutput++)
                 {
-                    i_errorTermSum+=i_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->inputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput] /*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                    f_errorTermSum+=f_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->forgetGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput] /*No weight premuliplication for inputs.*/ /*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                    o_errorTermSum+=o_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->outputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput] /*No weight premuliplication for inputs.*/ /*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                    g_errorTermSum+=g_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->candidateGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput] /*No weight premuliplication for inputs.*/ /*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
+                    i_errorTermSum+=i_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->inputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
+                    f_errorTermSum+=f_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->forgetGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
+                    o_errorTermSum+=o_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->outputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
+                    g_errorTermSum+=g_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->candidateGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
                 }
             }
 
-            // CHECK THIS AGAIN (MOST LIKELY WRONG):
             for(uint32_t weightInput=0;weightInput<inputCount;weightInput++)
             {
                 if(!dxcWeightsSet)

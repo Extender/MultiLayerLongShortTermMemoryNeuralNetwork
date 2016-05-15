@@ -8,7 +8,7 @@ double LSTMState::sig(double input)
 
 double LSTMState::tanh(double input)
 {
-    // Derivative: 1.0-((tanh(input))^2)
+    // Derivative: 1.0-pow(tanh(input),2.0)
     return (1.0-pow(M_E,-2.0*input))/(1.0+pow(M_E,-2.0*input));
 }
 
