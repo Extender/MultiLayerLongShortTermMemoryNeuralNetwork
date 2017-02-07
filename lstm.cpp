@@ -89,7 +89,7 @@ void LSTM::fillDoubleArray(double *array, uint32_t size, double value)
 
 void LSTM::fillDoubleArrayWithRandomValues(double *array, uint32_t size, double from, double to)
 {
-    srand(time(NULL));
+    srand((uint32_t)time(0));
     for(uint32_t i=0;i<size;i++)
         array[i]=from+((double)rand()/(double)RAND_MAX)*(to-from);
 }
@@ -115,7 +115,7 @@ LSTMState *LSTM::pushState()
         stateArrayPos++;
     }
     // Copy values from previous state, if such a state exists:
-    LSTMState *newState=stateArrayPos>0/*Has previous state?*/?new LSTMState(getState(1)):new LSTMState(0,inputCount,outputCount,hiddenLayerCount,hiddenLayerNeuronCounts);
+    LSTMState *newState=stateArrayPos>0/*Has previous state?*/?new LSTMState(getState(1)):new LSTMState(0,inputCount,outputCount,forgetGateHiddenLayerCount,forgetGateHiddenLayerNeuronCounts,inputGateHiddenLayerCount,inputGateHiddenLayerNeuronCounts,outputGateHiddenLayerCount,outputGateHiddenLayerNeuronCounts,candidateGateHiddenLayerCount,candidateGateHiddenLayerNeuronCounts);
     states[stateArrayPos]=newState;
     if(stateArrayPos>backpropagationSteps)
     {
@@ -146,31 +146,203 @@ LSTMState *LSTM::getState(uint32_t stepsBack)
     return states[stateArrayPos-stepsBack];
 }
 
-LSTM::LSTM(uint32_t _inputCount, uint32_t _outputCount, uint32_t _backpropagationSteps, double _learningRate, uint32_t _hiddenLayerCount, uint32_t *_hiddenLayerNeuronCounts)
+LSTM::LSTM(uint32_t _inputCount, uint32_t _outputCount, uint32_t _backpropagationSteps, double _learningRate, double _momentum, double _weightDecay, double _networkLearningRate, double _networkMomentum, double _networkWeightDecay, uint32_t _forgetGateHiddenLayerCount, uint32_t *_forgetGateHiddenLayerNeuronCounts, uint32_t _inputGateHiddenLayerCount, uint32_t *_inputGateHiddenLayerNeuronCounts, uint32_t _outputGateHiddenLayerCount, uint32_t *_outputGateHiddenLayerNeuronCounts, uint32_t _candidateGateHiddenLayerCount, uint32_t *_candidateGateHiddenLayerNeuronCounts)
 {
     inputCount=_inputCount;
     outputCount=_outputCount;
     uint32_t inputAndOutputCount=inputCount+outputCount;
     backpropagationSteps=_backpropagationSteps;
     learningRate=_learningRate;
+    momentum=_momentum;
+    weightDecay=_weightDecay;
+
+    if(_networkLearningRate==std::numeric_limits<double>::min())
+        _networkLearningRate=_learningRate;
+    if(_networkMomentum==std::numeric_limits<double>::min())
+        _networkMomentum=_momentum;
+    if(_networkWeightDecay==std::numeric_limits<double>::min())
+        _networkWeightDecay=_weightDecay;
+
+    forgetGateNetworkLearningRate=_networkLearningRate;
+    inputGateNetworkLearningRate=_networkLearningRate;
+    outputGateNetworkLearningRate=_networkLearningRate;
+    candidateGateNetworkLearningRate=_networkLearningRate;
+    forgetGateNetworkMomentum=_networkMomentum;
+    inputGateNetworkMomentum=_networkMomentum;
+    outputGateNetworkMomentum=_networkMomentum;
+    candidateGateNetworkMomentum=_networkMomentum;
+    forgetGateNetworkWeightDecay=_networkWeightDecay;
+    inputGateNetworkWeightDecay=_networkWeightDecay;
+    outputGateNetworkWeightDecay=_networkWeightDecay;
+    candidateGateNetworkWeightDecay=_networkWeightDecay;
 
     stateArraySize=2*backpropagationSteps+1 /*One for the current state.*/;
     stateArrayPos=0xffffffff;
     states=(LSTMState**)malloc(stateArraySize*sizeof(LSTMState*));
 
-    hiddenLayerCount=_hiddenLayerCount;
-    totalLayerCount=hiddenLayerCount+1;
+    forgetGateHiddenLayerCount=_forgetGateHiddenLayerCount;
+    inputGateHiddenLayerCount=_inputGateHiddenLayerCount;
+    outputGateHiddenLayerCount=_outputGateHiddenLayerCount;
+    candidateGateHiddenLayerCount=_candidateGateHiddenLayerCount;
+
+    size_t outputCountBasedDoubleArraySize=outputCount*sizeof(double);
+    previousForgetGateValueSumBiasWeightDeltas=(double*)malloc(outputCountBasedDoubleArraySize);
+    previousInputGateValueSumBiasWeightDeltas=(double*)malloc(outputCountBasedDoubleArraySize);
+    previousOutputGateValueSumBiasWeightDeltas=(double*)malloc(outputCountBasedDoubleArraySize);
+    previousCandidateGateValueSumBiasWeightDeltas=(double*)malloc(outputCountBasedDoubleArraySize);
+
+    for(uint32_t cell=0;cell<outputCount;cell++)
+    {
+        previousForgetGateValueSumBiasWeightDeltas[cell]=0.0;
+        previousInputGateValueSumBiasWeightDeltas[cell]=0.0;
+        previousOutputGateValueSumBiasWeightDeltas[cell]=0.0;
+        previousCandidateGateValueSumBiasWeightDeltas[cell]=0.0;
+    }
 
     // Copy hidden layer neuron counts (to avoid errors)
-    uint32_t hiddenLayerNeuronCountArraySize=hiddenLayerCount*sizeof(uint32_t);
-    hiddenLayerNeuronCounts=(uint32_t*)malloc(hiddenLayerNeuronCountArraySize);
-    if(_hiddenLayerNeuronCounts==0)
+
+    // Forget gate
+    uint32_t forgetGateHiddenLayerNeuronCountArraySize=forgetGateHiddenLayerCount*sizeof(uint32_t);
+    forgetGateHiddenLayerNeuronCounts=(uint32_t*)malloc(forgetGateHiddenLayerNeuronCountArraySize);
+    if(_forgetGateHiddenLayerNeuronCounts==0)
     {
-        for(uint32_t hiddenLayer=0;hiddenLayer<hiddenLayerCount;hiddenLayer++)
-            hiddenLayerNeuronCounts[hiddenLayer]=inputAndOutputCount;
+        for(uint32_t hiddenLayer=0;hiddenLayer<forgetGateHiddenLayerCount;hiddenLayer++)
+            forgetGateHiddenLayerNeuronCounts[hiddenLayer]=inputAndOutputCount;
     }
     else
-        memcpy(hiddenLayerNeuronCounts,_hiddenLayerNeuronCounts,hiddenLayerNeuronCountArraySize);
+        memcpy(forgetGateHiddenLayerNeuronCounts,_forgetGateHiddenLayerNeuronCounts,forgetGateHiddenLayerNeuronCountArraySize);
+
+    // Input gate
+    uint32_t inputGateHiddenLayerNeuronCountArraySize=inputGateHiddenLayerCount*sizeof(uint32_t);
+    inputGateHiddenLayerNeuronCounts=(uint32_t*)malloc(inputGateHiddenLayerNeuronCountArraySize);
+    if(_inputGateHiddenLayerNeuronCounts==0)
+    {
+        for(uint32_t hiddenLayer=0;hiddenLayer<inputGateHiddenLayerCount;hiddenLayer++)
+            inputGateHiddenLayerNeuronCounts[hiddenLayer]=inputAndOutputCount;
+    }
+    else
+        memcpy(inputGateHiddenLayerNeuronCounts,_inputGateHiddenLayerNeuronCounts,inputGateHiddenLayerNeuronCountArraySize);
+
+    // Output gate
+    uint32_t outputGateHiddenLayerNeuronCountArraySize=outputGateHiddenLayerCount*sizeof(uint32_t);
+    outputGateHiddenLayerNeuronCounts=(uint32_t*)malloc(outputGateHiddenLayerNeuronCountArraySize);
+    if(_outputGateHiddenLayerNeuronCounts==0)
+    {
+        for(uint32_t hiddenLayer=0;hiddenLayer<outputGateHiddenLayerCount;hiddenLayer++)
+            outputGateHiddenLayerNeuronCounts[hiddenLayer]=inputAndOutputCount;
+    }
+    else
+        memcpy(outputGateHiddenLayerNeuronCounts,_outputGateHiddenLayerNeuronCounts,outputGateHiddenLayerNeuronCountArraySize);
+
+    // Candidate gate
+    uint32_t candidateGateHiddenLayerNeuronCountArraySize=candidateGateHiddenLayerCount*sizeof(uint32_t);
+    candidateGateHiddenLayerNeuronCounts=(uint32_t*)malloc(candidateGateHiddenLayerNeuronCountArraySize);
+    if(_candidateGateHiddenLayerNeuronCounts==0)
+    {
+        for(uint32_t hiddenLayer=0;hiddenLayer<candidateGateHiddenLayerCount;hiddenLayer++)
+            candidateGateHiddenLayerNeuronCounts[hiddenLayer]=inputAndOutputCount;
+    }
+    else
+        memcpy(candidateGateHiddenLayerNeuronCounts,_candidateGateHiddenLayerNeuronCounts,candidateGateHiddenLayerNeuronCountArraySize);
+
+    forgetGateTotalLayerCount=_forgetGateHiddenLayerCount+1;
+    inputGateTotalLayerCount=_inputGateHiddenLayerCount+1;
+    outputGateTotalLayerCount=_outputGateHiddenLayerCount+1;
+    candidateGateTotalLayerCount=_candidateGateHiddenLayerCount+1;
+
+    size_t forgetGateTotalLayerCountBasedDoublePointerArraySize=forgetGateTotalLayerCount*sizeof(double*);
+    size_t inputGateTotalLayerCountBasedDoublePointerArraySize=inputGateTotalLayerCount*sizeof(double*);
+    size_t outputGateTotalLayerCountBasedDoublePointerArraySize=outputGateTotalLayerCount*sizeof(double*);
+    size_t candidateGateTotalLayerCountBasedDoublePointerArraySize=candidateGateTotalLayerCount*sizeof(double*);
+
+    previousForgetGateBiasWeightDeltas=(double**)malloc(forgetGateTotalLayerCountBasedDoublePointerArraySize);
+    previousInputGateBiasWeightDeltas=(double**)malloc(inputGateTotalLayerCountBasedDoublePointerArraySize);
+    previousOutputGateBiasWeightDeltas=(double**)malloc(outputGateTotalLayerCountBasedDoublePointerArraySize);
+    previousCandidateGateBiasWeightDeltas=(double**)malloc(candidateGateTotalLayerCountBasedDoublePointerArraySize);
+    previousForgetGateWeightDeltas=(double***)malloc(forgetGateTotalLayerCountBasedDoublePointerArraySize);
+    previousInputGateWeightDeltas=(double***)malloc(inputGateTotalLayerCountBasedDoublePointerArraySize);
+    previousOutputGateWeightDeltas=(double***)malloc(outputGateTotalLayerCountBasedDoublePointerArraySize);
+    previousCandidateGateWeightDeltas=(double***)malloc(candidateGateTotalLayerCountBasedDoublePointerArraySize);
+
+    // Forget gate
+    for(uint32_t currentLayer=0;currentLayer<forgetGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==forgetGateTotalLayerCount-1?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[currentLayer];
+        uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[currentLayer-1];
+        size_t thisLayerNeuronCountBasedDoubleArraySize=neuronsInThisLayer*sizeof(double);
+        size_t thisLayerNeuronCountBasedDoublePointerArraySize=neuronsInThisLayer*sizeof(double*);
+        size_t previousLayerNeuronCountBasedDoubleArraySize=neuronsInPreviousLayer*sizeof(double);
+        previousForgetGateBiasWeightDeltas[currentLayer]=(double*)malloc(thisLayerNeuronCountBasedDoubleArraySize);
+        previousForgetGateWeightDeltas[currentLayer]=(double**)malloc(thisLayerNeuronCountBasedDoublePointerArraySize);
+
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+        {
+            previousForgetGateBiasWeightDeltas[currentLayer][neuronInThisLayer]=0.0;
+            previousForgetGateWeightDeltas[currentLayer][neuronInThisLayer]=(double*)malloc(previousLayerNeuronCountBasedDoubleArraySize);
+            for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                previousForgetGateWeightDeltas[currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+        }
+    }
+
+    // Input gate
+    for(uint32_t currentLayer=0;currentLayer<inputGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==inputGateTotalLayerCount-1?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[currentLayer];
+        uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[currentLayer-1];
+        size_t thisLayerNeuronCountBasedDoubleArraySize=neuronsInThisLayer*sizeof(double);
+        size_t thisLayerNeuronCountBasedDoublePointerArraySize=neuronsInThisLayer*sizeof(double*);
+        size_t previousLayerNeuronCountBasedDoubleArraySize=neuronsInPreviousLayer*sizeof(double);
+        previousInputGateBiasWeightDeltas[currentLayer]=(double*)malloc(thisLayerNeuronCountBasedDoubleArraySize);
+        previousInputGateWeightDeltas[currentLayer]=(double**)malloc(thisLayerNeuronCountBasedDoublePointerArraySize);
+
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+        {
+            previousInputGateBiasWeightDeltas[currentLayer][neuronInThisLayer]=0.0;
+            previousInputGateWeightDeltas[currentLayer][neuronInThisLayer]=(double*)malloc(previousLayerNeuronCountBasedDoubleArraySize);
+            for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                previousInputGateWeightDeltas[currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+        }
+    }
+
+    // Output gate
+    for(uint32_t currentLayer=0;currentLayer<outputGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==outputGateTotalLayerCount-1?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[currentLayer];
+        uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[currentLayer-1];
+        size_t thisLayerNeuronCountBasedDoubleArraySize=neuronsInThisLayer*sizeof(double);
+        size_t thisLayerNeuronCountBasedDoublePointerArraySize=neuronsInThisLayer*sizeof(double*);
+        size_t previousLayerNeuronCountBasedDoubleArraySize=neuronsInPreviousLayer*sizeof(double);
+        previousOutputGateBiasWeightDeltas[currentLayer]=(double*)malloc(thisLayerNeuronCountBasedDoubleArraySize);
+        previousOutputGateWeightDeltas[currentLayer]=(double**)malloc(thisLayerNeuronCountBasedDoublePointerArraySize);
+
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+        {
+            previousOutputGateBiasWeightDeltas[currentLayer][neuronInThisLayer]=0.0;
+            previousOutputGateWeightDeltas[currentLayer][neuronInThisLayer]=(double*)malloc(previousLayerNeuronCountBasedDoubleArraySize);
+            for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                previousOutputGateWeightDeltas[currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+        }
+    }
+
+    // Candidate gate
+    for(uint32_t currentLayer=0;currentLayer<candidateGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==candidateGateTotalLayerCount-1?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[currentLayer];
+        uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[currentLayer-1];
+        size_t thisLayerNeuronCountBasedDoubleArraySize=neuronsInThisLayer*sizeof(double);
+        size_t thisLayerNeuronCountBasedDoublePointerArraySize=neuronsInThisLayer*sizeof(double*);
+        size_t previousLayerNeuronCountBasedDoubleArraySize=neuronsInPreviousLayer*sizeof(double);
+        previousCandidateGateBiasWeightDeltas[currentLayer]=(double*)malloc(thisLayerNeuronCountBasedDoubleArraySize);
+        previousCandidateGateWeightDeltas[currentLayer]=(double**)malloc(thisLayerNeuronCountBasedDoublePointerArraySize);
+
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+        {
+            previousCandidateGateBiasWeightDeltas[currentLayer][neuronInThisLayer]=0.0;
+            previousCandidateGateWeightDeltas[currentLayer][neuronInThisLayer]=(double*)malloc(previousLayerNeuronCountBasedDoubleArraySize);
+            for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                previousCandidateGateWeightDeltas[currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+        }
+    }
 }
 
 LSTM::~LSTM()
@@ -178,7 +350,63 @@ LSTM::~LSTM()
     for(uint32_t layer=stateArrayPos-backpropagationSteps;layer<=stateArrayPos;layer++)
         delete states[layer];
     free(states);
-    free(hiddenLayerNeuronCounts);
+
+    uint32_t inputAndOutputCount=inputCount+outputCount;
+    // Forget gate
+    for(uint32_t currentLayer=0;currentLayer<forgetGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==forgetGateTotalLayerCount-1?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[currentLayer];
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+            free(previousForgetGateWeightDeltas[currentLayer][neuronInThisLayer]);
+        free(previousForgetGateWeightDeltas[currentLayer]);
+    }
+
+    // Input gate
+    for(uint32_t currentLayer=0;currentLayer<inputGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==inputGateTotalLayerCount-1?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[currentLayer];
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+            free(previousInputGateWeightDeltas[currentLayer][neuronInThisLayer]);
+        free(previousInputGateWeightDeltas[currentLayer]);
+    }
+
+    // Output gate
+    for(uint32_t currentLayer=0;currentLayer<outputGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==outputGateTotalLayerCount-1?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[currentLayer];
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+            free(previousOutputGateWeightDeltas[currentLayer][neuronInThisLayer]);
+        free(previousOutputGateWeightDeltas[currentLayer]);
+    }
+
+    // Candidate gate
+    for(uint32_t currentLayer=0;currentLayer<candidateGateTotalLayerCount;currentLayer++)
+    {
+        uint32_t neuronsInThisLayer=currentLayer==candidateGateTotalLayerCount-1?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[currentLayer];
+        for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+            free(previousCandidateGateWeightDeltas[currentLayer][neuronInThisLayer]);
+        free(previousCandidateGateWeightDeltas[currentLayer]);
+        free(previousCandidateGateBiasWeightDeltas[currentLayer]);
+    }
+
+    free(previousInputGateBiasWeightDeltas);
+    free(previousForgetGateBiasWeightDeltas);
+    free(previousOutputGateBiasWeightDeltas);
+    free(previousCandidateGateBiasWeightDeltas);
+    free(previousInputGateWeightDeltas);
+    free(previousForgetGateWeightDeltas);
+    free(previousOutputGateWeightDeltas);
+    free(previousCandidateGateWeightDeltas);
+
+    free(previousInputGateValueSumBiasWeightDeltas);
+    free(previousForgetGateValueSumBiasWeightDeltas);
+    free(previousOutputGateValueSumBiasWeightDeltas);
+    free(previousCandidateGateValueSumBiasWeightDeltas);
+
+    free(forgetGateHiddenLayerNeuronCounts);
+    free(inputGateHiddenLayerNeuronCounts);
+    free(outputGateHiddenLayerNeuronCounts);
+    free(candidateGateHiddenLayerNeuronCounts);
 }
 
 double *LSTM::process(double *input)
@@ -203,7 +431,7 @@ double *LSTM::process(double *input)
             for(uint32_t i=0;i<outputCount;i++)
                 forgetGateValueSum+=l->forgetGatePreValues[cell][inputCount+i]; // Single-layer version: forgetGateValueSum+=l->forgetGateWeights[cell][inputCount+i]*previousState->output[i]
         }
-        l->forgetGateValues[cell]=sig(forgetGateValueSum+l->forgetGateBiasWeights[cell]);
+        l->forgetGateValues[cell]=sig(forgetGateValueSum+l->forgetGateValueSumBiasWeights[cell]);
 
         // Calculate input gate value
 
@@ -215,7 +443,7 @@ double *LSTM::process(double *input)
             for(uint32_t i=0;i<outputCount;i++)
                 inputGateValueSum+=l->inputGatePreValues[cell][inputCount+i]; // Single-layer version: inputGateValueSum+=l->inputGateWeights[cell][inputCount+i]*previousState->output[i]
         }
-        l->inputGateValues[cell]=sig(inputGateValueSum+l->inputGateBiasWeights[cell]);
+        l->inputGateValues[cell]=sig(inputGateValueSum+l->inputGateValueSumBiasWeights[cell]);
 
         // Calculate output gate value
 
@@ -227,7 +455,7 @@ double *LSTM::process(double *input)
             for(uint32_t i=0;i<outputCount;i++)
                 outputGateValueSum+=l->outputGatePreValues[cell][inputCount+i]; // Single-layer version: outputGateValueSum+=l->outputGateWeights[cell][inputCount+i]*previousState->output[i]
         }
-        l->outputGateValues[cell]=sig(outputGateValueSum+l->outputGateBiasWeights[cell]);
+        l->outputGateValues[cell]=sig(outputGateValueSum+l->outputGateValueSumBiasWeights[cell]);
 
         // Calculate candidate assessment gate value
 
@@ -239,7 +467,7 @@ double *LSTM::process(double *input)
             for(uint32_t i=0;i<outputCount;i++)
                 candidateGateValueSum+=l->candidateGatePreValues[cell][inputCount+i]; // Single-layer version: l->candidateGateWeights[cell][inputCount+i]*previousState->output[i]
         }
-        l->candidateGateValues[cell]=tanh(candidateGateValueSum+l->candidateGateBiasWeights[cell]);
+        l->candidateGateValues[cell]=tanh(candidateGateValueSum+l->candidateGateValueSumBiasWeights[cell]);
 
         // Calculate new cell state
 
@@ -257,8 +485,6 @@ double *LSTM::process(double *input)
 
 void LSTM::learn(double **desiredOutputs)
 {
-    // Check for any non-initialized arrays
-
     uint32_t availableStepsBack=getAvailableStepsBack();
     // Note that we sum this over all steps, so we do not need the extra time dimension (double**).
 
@@ -331,7 +557,7 @@ void LSTM::learn(double **desiredOutputs)
         // Here, we have np.dot(self.param.wi.T, di_input)
         // That means:
         // dxc represents all weights.
-        // Each weight i in dxc has as its value: sum over cells(sum of the four weights of a cell that have the index i (i,f,o,g), each multiplied by their cell's and weight group's (i,f,o, or g) respective derivative w.r.t. the input)).
+        // Each weight i in dxc has as its value: sum over cells*(sum of the four weights of a cell that have the index i (i,f,o,g), each multiplied by their cell's and weight group's (i,f,o, or g) respective derivative w.r.t. the input)).
 
 
         // What we need to do is to calculate the derivative of the loss function w.r.t. the biases of the gates,
@@ -343,10 +569,10 @@ void LSTM::learn(double **desiredOutputs)
         for(uint32_t cell=0;cell<outputCount;cell++)
         {
             // For each cell:
-            double diff_s=hasHigherState?higherState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToCellStates[cell]:0.0;
+            double diff_s=hasHigherState?higherState->bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToLastCellStates[cell]:0.0;
             double diff_h=2.0*(thisState->output[cell]-desiredOutputs[availableStepsBack-stepsBack][cell]);
             if(hasHigherState)
-                diff_h+=higherState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToOutputs[cell];
+                diff_h+=higherState->bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToLastOutputs[cell];
 
             _ds[cell]=thisState->outputGateValues[cell]*diff_h+diff_s;
             _do[cell]=thisState->cellStates[cell]*diff_h;
@@ -373,112 +599,209 @@ void LSTM::learn(double **desiredOutputs)
 
             if(!weightsAllocated)
             {
-                wi_diff[cell]=(double***)malloc(totalLayerCount*sizeof(double**));
-                wf_diff[cell]=(double***)malloc(totalLayerCount*sizeof(double**));
-                wo_diff[cell]=(double***)malloc(totalLayerCount*sizeof(double**));
-                wg_diff[cell]=(double***)malloc(totalLayerCount*sizeof(double**));
+                wi_diff[cell]=(double***)malloc(inputGateTotalLayerCount*sizeof(double**));
+                wf_diff[cell]=(double***)malloc(forgetGateTotalLayerCount*sizeof(double**));
+                wo_diff[cell]=(double***)malloc(outputGateTotalLayerCount*sizeof(double**));
+                wg_diff[cell]=(double***)malloc(candidateGateTotalLayerCount*sizeof(double**));
 
-                ibi_diff[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
-                ibf_diff[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
-                ibo_diff[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
-                ibg_diff[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
+                ibi_diff[cell]=(double**)malloc(inputGateTotalLayerCount*sizeof(double*));
+                ibf_diff[cell]=(double**)malloc(forgetGateTotalLayerCount*sizeof(double*));
+                ibo_diff[cell]=(double**)malloc(outputGateTotalLayerCount*sizeof(double*));
+                ibg_diff[cell]=(double**)malloc(candidateGateTotalLayerCount*sizeof(double*));
 
-                i_errorTerms[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
-                f_errorTerms[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
-                o_errorTerms[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
-                g_errorTerms[cell]=(double**)malloc(totalLayerCount*sizeof(double*));
+                i_errorTerms[cell]=(double**)malloc(inputGateTotalLayerCount*sizeof(double*));
+                f_errorTerms[cell]=(double**)malloc(forgetGateTotalLayerCount*sizeof(double*));
+                o_errorTerms[cell]=(double**)malloc(outputGateTotalLayerCount*sizeof(double*));
+                g_errorTerms[cell]=(double**)malloc(candidateGateTotalLayerCount*sizeof(double*));
             }
 
-            for(uint32_t _currentLayer=totalLayerCount;_currentLayer>0;_currentLayer--) // Actual layer number: _currentLayer-1 (_currentLayer must be >=0 during the comparison)
+            // Forget gate
+            for(uint32_t _currentLayer=forgetGateTotalLayerCount;_currentLayer>0;_currentLayer--) // Actual layer number: _currentLayer-1 (_currentLayer must be >=0 during the comparison)
             {
                 uint32_t currentLayer=_currentLayer-1;
-                uint32_t neuronsInThisLayer=currentLayer==totalLayerCount-1?inputAndOutputCount:hiddenLayerNeuronCounts[currentLayer];
-                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:hiddenLayerNeuronCounts[currentLayer-1];
-                uint32_t neuronsInHigherLayer=currentLayer==totalLayerCount-1?0:((totalLayerCount>=2&&currentLayer==totalLayerCount-2)?inputAndOutputCount:hiddenLayerNeuronCounts[currentLayer+1]);
+                uint32_t neuronsInThisLayer=currentLayer==forgetGateTotalLayerCount-1?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[currentLayer];
+                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[currentLayer-1];
+                uint32_t neuronsInHigherLayer=currentLayer==forgetGateTotalLayerCount-1?0:((forgetGateTotalLayerCount>=2&&currentLayer==forgetGateTotalLayerCount-2)?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[currentLayer+1]);
+
+                if(!weightsAllocated)
+                {
+                    wf_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
+                    ibf_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
+                    f_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
+                }
+
+                for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+                {
+                    if(!weightsAllocated)
+                    {
+                        wf_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
+                        ibf_diff[cell][currentLayer][neuronInThisLayer]=0.0;
+                    }
+
+                    if(currentLayer==forgetGateTotalLayerCount-1)
+                        f_errorTerms[cell][currentLayer][neuronInThisLayer]=_df_input[cell];
+                    else
+                    {
+                        double f_errorTermSum=0.0;
+
+                        // Sum error terms of layer above multiplied by the respective weights
+
+                        for(uint32_t neuronInHigherLayer=0;neuronInHigherLayer<neuronsInHigherLayer;neuronInHigherLayer++)
+                            f_errorTermSum+=f_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->forgetGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer*/;
+
+                        f_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->forgetGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*f_errorTermSum;
+                    }
+
+                    ibf_diff[cell][currentLayer][neuronInThisLayer]+=f_errorTerms[cell][currentLayer][neuronInThisLayer];
+
+                    for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                    {
+                        if(!weightsAllocated)
+                            wf_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+                        wf_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=f_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->forgetGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
+                    }
+                }
+            }
+
+            // Input gate
+            for(uint32_t _currentLayer=inputGateTotalLayerCount;_currentLayer>0;_currentLayer--) // Actual layer number: _currentLayer-1 (_currentLayer must be >=0 during the comparison)
+            {
+                uint32_t currentLayer=_currentLayer-1;
+                uint32_t neuronsInThisLayer=currentLayer==inputGateTotalLayerCount-1?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[currentLayer];
+                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[currentLayer-1];
+                uint32_t neuronsInHigherLayer=currentLayer==inputGateTotalLayerCount-1?0:((inputGateTotalLayerCount>=2&&currentLayer==inputGateTotalLayerCount-2)?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[currentLayer+1]);
 
                 if(!weightsAllocated)
                 {
                     wi_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
-                    wf_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
-                    wo_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
-                    wg_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
-
                     ibi_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-                    ibf_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-                    ibo_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-                    ibg_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-
                     i_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-                    f_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-                    o_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
-                    g_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
                 }
-
 
                 for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
                 {
                     if(!weightsAllocated)
                     {
                         wi_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
-                        wf_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
-                        wo_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
-                        wg_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
-
                         ibi_diff[cell][currentLayer][neuronInThisLayer]=0.0;
-                        ibf_diff[cell][currentLayer][neuronInThisLayer]=0.0;
-                        ibo_diff[cell][currentLayer][neuronInThisLayer]=0.0;
-                        ibg_diff[cell][currentLayer][neuronInThisLayer]=0.0;
                     }
 
-                    if(currentLayer==totalLayerCount-1)
-                    {
+                    if(currentLayer==inputGateTotalLayerCount-1)
                         i_errorTerms[cell][currentLayer][neuronInThisLayer]=_di_input[cell];
-                        f_errorTerms[cell][currentLayer][neuronInThisLayer]=_df_input[cell];
-                        o_errorTerms[cell][currentLayer][neuronInThisLayer]=_do_input[cell];
-                        g_errorTerms[cell][currentLayer][neuronInThisLayer]=_dg_input[cell];
-                    }
                     else
                     {
                         double i_errorTermSum=0.0;
-                        double f_errorTermSum=0.0;
+
+                        // Sum error terms of layer above multiplied by the respective weights
+
+                        for(uint32_t neuronInHigherLayer=0;neuronInHigherLayer<neuronsInHigherLayer;neuronInHigherLayer++)
+                            i_errorTermSum+=i_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->inputGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer*/;
+
+                        i_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->inputGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*i_errorTermSum;
+                    }
+
+                    ibi_diff[cell][currentLayer][neuronInThisLayer]+=i_errorTerms[cell][currentLayer][neuronInThisLayer];
+
+                    for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                    {
+                        if(!weightsAllocated)
+                            wi_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+                        wi_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=i_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->inputGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
+                    }
+                }
+            }
+
+            // Output gate
+            for(uint32_t _currentLayer=outputGateTotalLayerCount;_currentLayer>0;_currentLayer--) // Actual layer number: _currentLayer-1 (_currentLayer must be >=0 during the comparison)
+            {
+                uint32_t currentLayer=_currentLayer-1;
+                uint32_t neuronsInThisLayer=currentLayer==outputGateTotalLayerCount-1?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[currentLayer];
+                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[currentLayer-1];
+                uint32_t neuronsInHigherLayer=currentLayer==outputGateTotalLayerCount-1?0:((outputGateTotalLayerCount>=2&&currentLayer==outputGateTotalLayerCount-2)?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[currentLayer+1]);
+
+                if(!weightsAllocated)
+                {
+                    wo_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
+                    ibo_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
+                    o_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
+                }
+
+                for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+                {
+                    if(!weightsAllocated)
+                    {
+                        wo_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
+                        ibo_diff[cell][currentLayer][neuronInThisLayer]=0.0;
+                    }
+
+                    if(currentLayer==outputGateTotalLayerCount-1)
+                        o_errorTerms[cell][currentLayer][neuronInThisLayer]=_do_input[cell];
+                    else
+                    {
                         double o_errorTermSum=0.0;
+
+                        // Sum error terms of layer above multiplied by the respective weights
+
+                        for(uint32_t neuronInHigherLayer=0;neuronInHigherLayer<neuronsInHigherLayer;neuronInHigherLayer++)
+                            o_errorTermSum+=o_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->outputGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer*/;
+
+                        o_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->outputGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*o_errorTermSum;
+                    }
+
+                    ibo_diff[cell][currentLayer][neuronInThisLayer]+=o_errorTerms[cell][currentLayer][neuronInThisLayer];
+
+                    for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
+                    {
+                        if(!weightsAllocated)
+                            wo_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
+                        wo_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=o_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->outputGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
+                    }
+                }
+            }
+
+            // Candidate gate
+            for(uint32_t _currentLayer=candidateGateTotalLayerCount;_currentLayer>0;_currentLayer--) // Actual layer number: _currentLayer-1 (_currentLayer must be >=0 during the comparison)
+            {
+                uint32_t currentLayer=_currentLayer-1;
+                uint32_t neuronsInThisLayer=currentLayer==candidateGateTotalLayerCount-1?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[currentLayer];
+                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[currentLayer-1];
+                uint32_t neuronsInHigherLayer=currentLayer==candidateGateTotalLayerCount-1?0:((candidateGateTotalLayerCount>=2&&currentLayer==candidateGateTotalLayerCount-2)?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[currentLayer+1]);
+
+                if(!weightsAllocated)
+                {
+                    wg_diff[cell][currentLayer]=(double**)malloc(neuronsInThisLayer*sizeof(double*));
+                    ibg_diff[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
+                    g_errorTerms[cell][currentLayer]=(double*)malloc(neuronsInThisLayer*sizeof(double));
+                }
+
+                for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
+                {
+                    if(!weightsAllocated)
+                    {
+                        wg_diff[cell][currentLayer][neuronInThisLayer]=(double*)malloc(neuronsInPreviousLayer*sizeof(double));
+                        ibg_diff[cell][currentLayer][neuronInThisLayer]=0.0;
+                    }
+
+                    if(currentLayer==candidateGateTotalLayerCount-1)
+                        g_errorTerms[cell][currentLayer][neuronInThisLayer]=_dg_input[cell];
+                    else
+                    {
                         double g_errorTermSum=0.0;
 
                         // Sum error terms of layer above multiplied by the respective weights
 
                         for(uint32_t neuronInHigherLayer=0;neuronInHigherLayer<neuronsInHigherLayer;neuronInHigherLayer++)
-                        {
-                            // CHECK THIS AGAIN:
-                            i_errorTermSum+=i_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->inputGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                            f_errorTermSum+=f_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->forgetGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                            o_errorTermSum+=o_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->outputGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                            g_errorTermSum+=g_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->candidateGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer (CHECK THIS!)*/;
-                        }
+                            g_errorTermSum+=g_errorTerms[cell][currentLayer+1][neuronInHigherLayer]*thisState->candidateGateLayerWeights[cell][currentLayer][neuronInThisLayer][neuronInHigherLayer]/*Weight of this neuron to the neuron in the higher layer*/;
 
-                        i_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->inputGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*i_errorTermSum;
-                        f_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->forgetGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*f_errorTermSum;
-                        o_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->outputGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*o_errorTermSum;
                         g_errorTerms[cell][currentLayer][neuronInThisLayer]=(1.0-pow(thisState->candidateGateLayerNeuronValues[cell][currentLayer][neuronInThisLayer],2))*g_errorTermSum;
                     }
 
-                    ibi_diff[cell][currentLayer][neuronInThisLayer]+=i_errorTerms[cell][currentLayer][neuronInThisLayer];
-                    ibf_diff[cell][currentLayer][neuronInThisLayer]+=f_errorTerms[cell][currentLayer][neuronInThisLayer];
-                    ibo_diff[cell][currentLayer][neuronInThisLayer]+=o_errorTerms[cell][currentLayer][neuronInThisLayer];
                     ibg_diff[cell][currentLayer][neuronInThisLayer]+=g_errorTerms[cell][currentLayer][neuronInThisLayer];
 
                     for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
                     {
                         if(!weightsAllocated)
-                        {
-                            wi_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
-                            wf_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
-                            wo_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
                             wg_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]=0.0;
-                        }
-
-                        wi_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=i_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->inputGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
-                        wf_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=f_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->forgetGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
-                        wo_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=o_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->outputGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
                         wg_diff[cell][currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=g_errorTerms[cell][currentLayer][neuronInThisLayer]*(currentLayer==0?(neuronInPreviousLayer<inputCount?thisState->input[neuronInPreviousLayer]:(hasDeeperState?deeperState->output[neuronInPreviousLayer-inputCount]:0.0)):thisState->candidateGateLayerNeuronValues[cell][currentLayer-1][neuronInPreviousLayer]);
                     }
                 }
@@ -497,17 +820,37 @@ void LSTM::learn(double **desiredOutputs)
 
             // Sum error terms of layer above multiplied by the respective weights
 
-            uint32_t neuronsInBottommostLayer=hiddenLayerCount==0?inputAndOutputCount:hiddenLayerNeuronCounts[0];
+            uint32_t neuronsInForgetGateBottommostLayer=forgetGateHiddenLayerCount==0?inputAndOutputCount:forgetGateHiddenLayerNeuronCounts[0];
+            uint32_t neuronsInInputGateBottommostLayer=inputGateHiddenLayerCount==0?inputAndOutputCount:inputGateHiddenLayerNeuronCounts[0];
+            uint32_t neuronsInOutputGateBottommostLayer=outputGateHiddenLayerCount==0?inputAndOutputCount:outputGateHiddenLayerNeuronCounts[0];
+            uint32_t neuronsInCandidateGateBottommostLayer=candidateGateHiddenLayerCount==0?inputAndOutputCount:candidateGateHiddenLayerNeuronCounts[0];
 
-            for(uint32_t neuronInBottommostLayer=0;neuronInBottommostLayer<neuronsInBottommostLayer;neuronInBottommostLayer++)
+            // Forget gate
+            for(uint32_t neuronInBottommostLayer=0;neuronInBottommostLayer<neuronsInForgetGateBottommostLayer;neuronInBottommostLayer++)
             {
                 for(uint32_t weightInputOrOutput=0;weightInputOrOutput<inputAndOutputCount;weightInputOrOutput++)
-                {
-                    i_errorTermSum+=i_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->inputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
                     f_errorTermSum+=f_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->forgetGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
+            }
+
+            // Input gate
+            for(uint32_t neuronInBottommostLayer=0;neuronInBottommostLayer<neuronsInInputGateBottommostLayer;neuronInBottommostLayer++)
+            {
+                for(uint32_t weightInputOrOutput=0;weightInputOrOutput<inputAndOutputCount;weightInputOrOutput++)
+                    i_errorTermSum+=i_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->inputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
+            }
+
+            // Output gate
+            for(uint32_t neuronInBottommostLayer=0;neuronInBottommostLayer<neuronsInOutputGateBottommostLayer;neuronInBottommostLayer++)
+            {
+                for(uint32_t weightInputOrOutput=0;weightInputOrOutput<inputAndOutputCount;weightInputOrOutput++)
                     o_errorTermSum+=o_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->outputGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
+            }
+
+            // Output gate
+            for(uint32_t neuronInBottommostLayer=0;neuronInBottommostLayer<neuronsInCandidateGateBottommostLayer;neuronInBottommostLayer++)
+            {
+                for(uint32_t weightInputOrOutput=0;weightInputOrOutput<inputAndOutputCount;weightInputOrOutput++)
                     g_errorTermSum+=g_errorTerms[cell][0 /*Bottommost layer*/][neuronInBottommostLayer]*thisState->candidateGateLayerWeights[cell][0 /*Bottommost layer*/][neuronInBottommostLayer][weightInputOrOutput]; // Weight of this neuron to the neuron in the higher layer
-                }
             }
 
             for(uint32_t weightInput=0;weightInput<inputCount;weightInput++)
@@ -524,15 +867,15 @@ void LSTM::learn(double **desiredOutputs)
             }
 
             // bottom_diff_s:
-            thisState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToCellStates[cell]=_ds[cell]*thisState->forgetGateValues[cell];
+            thisState->bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToLastCellStates[cell]=_ds[cell]*thisState->forgetGateValues[cell];
             if(!dxcWeightsSet)
                 dxcWeightsSet=true;
         }
 
         // bottom_diff_x:
-        memcpy(thisState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToInputs,dxc,inputCount*sizeof(double));
+        memcpy(thisState->bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToInputs,dxc,inputCount*sizeof(double));
         // bottom_diff_h:
-        memcpy(thisState->bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToOutputs,dxc+inputCount,outputCount*sizeof(double));
+        memcpy(thisState->bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToLastOutputs,dxc+inputCount,outputCount*sizeof(double));
 
         free(dxc);
         free(_ds);
@@ -550,9 +893,16 @@ void LSTM::learn(double **desiredOutputs)
 
     double ***gateLayerWeights;
     double **gateLayerBiasWeights;
-
+    double ***previousGateWeightDeltas;
+    double **previousGateBiasWeightDeltas;
     double ***gateLayerWeightDiffs;
     double **gateLayerBiasWeightDiffs;
+    double ***gateErrorTerms;
+    uint32_t gateHiddenLayerCount;
+    uint32_t *gateHiddenLayerNeuronCounts;
+    double gateNetworkLearningRate;
+    double gateNetworkMomentum;
+    double gateNetworkWeightDecay;
 
     // Now that we have cycled through all states, apply all changes:
 
@@ -564,11 +914,18 @@ void LSTM::learn(double **desiredOutputs)
             if(gate==1)
             {
                 // Forget gate
-
                 gateLayerWeights=latestState->forgetGateLayerWeights[cell];
                 gateLayerBiasWeights=latestState->forgetGateLayerBiasWeights[cell];
+                previousGateWeightDeltas=previousForgetGateWeightDeltas;
+                previousGateBiasWeightDeltas=previousForgetGateBiasWeightDeltas;
                 gateLayerWeightDiffs=wf_diff[cell];
                 gateLayerBiasWeightDiffs=ibf_diff[cell];
+                gateHiddenLayerCount=forgetGateHiddenLayerCount;
+                gateHiddenLayerNeuronCounts=forgetGateHiddenLayerNeuronCounts;
+                gateErrorTerms=f_errorTerms;
+                gateNetworkLearningRate=forgetGateNetworkLearningRate;
+                gateNetworkMomentum=forgetGateNetworkMomentum;
+                gateNetworkWeightDecay=forgetGateNetworkWeightDecay;
             }
             else if(gate==2)
             {
@@ -576,8 +933,16 @@ void LSTM::learn(double **desiredOutputs)
 
                 gateLayerWeights=latestState->inputGateLayerWeights[cell];
                 gateLayerBiasWeights=latestState->inputGateLayerBiasWeights[cell];
+                previousGateWeightDeltas=previousInputGateWeightDeltas;
+                previousGateBiasWeightDeltas=previousInputGateBiasWeightDeltas;
                 gateLayerWeightDiffs=wi_diff[cell];
                 gateLayerBiasWeightDiffs=ibi_diff[cell];
+                gateHiddenLayerCount=inputGateHiddenLayerCount;
+                gateHiddenLayerNeuronCounts=inputGateHiddenLayerNeuronCounts;
+                gateErrorTerms=i_errorTerms;
+                gateNetworkLearningRate=inputGateNetworkLearningRate;
+                gateNetworkMomentum=inputGateNetworkMomentum;
+                gateNetworkWeightDecay=inputGateNetworkWeightDecay;
             }
             else if(gate==3)
             {
@@ -585,8 +950,16 @@ void LSTM::learn(double **desiredOutputs)
 
                 gateLayerWeights=latestState->outputGateLayerWeights[cell];
                 gateLayerBiasWeights=latestState->outputGateLayerBiasWeights[cell];
+                previousGateWeightDeltas=previousOutputGateWeightDeltas;
+                previousGateBiasWeightDeltas=previousOutputGateBiasWeightDeltas;
                 gateLayerWeightDiffs=wo_diff[cell];
                 gateLayerBiasWeightDiffs=ibo_diff[cell];
+                gateHiddenLayerCount=outputGateHiddenLayerCount;
+                gateHiddenLayerNeuronCounts=outputGateHiddenLayerNeuronCounts;
+                gateErrorTerms=o_errorTerms;
+                gateNetworkLearningRate=outputGateNetworkLearningRate;
+                gateNetworkMomentum=outputGateNetworkMomentum;
+                gateNetworkWeightDecay=outputGateNetworkWeightDecay;
             }
             else // if(gate==4)
             {
@@ -594,36 +967,45 @@ void LSTM::learn(double **desiredOutputs)
 
                 gateLayerWeights=latestState->candidateGateLayerWeights[cell];
                 gateLayerBiasWeights=latestState->candidateGateLayerBiasWeights[cell];
+                previousGateWeightDeltas=previousCandidateGateWeightDeltas;
+                previousGateBiasWeightDeltas=previousCandidateGateBiasWeightDeltas;
                 gateLayerWeightDiffs=wg_diff[cell];
                 gateLayerBiasWeightDiffs=ibg_diff[cell];
+                gateHiddenLayerCount=candidateGateHiddenLayerCount;
+                gateHiddenLayerNeuronCounts=candidateGateHiddenLayerNeuronCounts;
+                gateErrorTerms=g_errorTerms;
+                gateNetworkLearningRate=candidateGateNetworkLearningRate;
+                gateNetworkMomentum=candidateGateNetworkMomentum;
+                gateNetworkWeightDecay=candidateGateNetworkWeightDecay;
             }
 
-            for(uint32_t _currentLayer=hiddenLayerCount+1/*Include topmost output layer*/;_currentLayer>0;_currentLayer--)
+            for(uint32_t _currentLayer=gateHiddenLayerCount+1/*Include topmost output layer*/;_currentLayer>0;_currentLayer--)
             {
                 uint32_t currentLayer=_currentLayer-1;
-                uint32_t neuronsInThisLayer=currentLayer==hiddenLayerCount/*Is topmost output layer?*/?inputAndOutputCount:hiddenLayerNeuronCounts[currentLayer];
-                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:hiddenLayerNeuronCounts[currentLayer-1];
+                uint32_t neuronsInThisLayer=currentLayer==gateHiddenLayerCount/*Is topmost output layer?*/?inputAndOutputCount:gateHiddenLayerNeuronCounts[currentLayer];
+                uint32_t neuronsInPreviousLayer=currentLayer==0?inputAndOutputCount:gateHiddenLayerNeuronCounts[currentLayer-1];
                 for(uint32_t neuronInThisLayer=0;neuronInThisLayer<neuronsInThisLayer;neuronInThisLayer++)
                 {
                     // Adjust bias of this neuron
-                    gateLayerBiasWeights[currentLayer][neuronInThisLayer]-=learningRate*gateLayerBiasWeightDiffs[currentLayer][neuronInThisLayer];
+                    double currentBiasWeight=gateLayerBiasWeights[currentLayer][neuronInThisLayer];
+                    double previousBiasWeightDelta=previousGateBiasWeightDeltas[currentLayer][neuronInThisLayer];
+                    double biasWeightDelta=(1.0-gateNetworkMomentum)*-gateNetworkLearningRate*gateLayerBiasWeightDiffs[currentLayer][neuronInThisLayer]+gateNetworkMomentum*previousBiasWeightDelta-gateNetworkWeightDecay*currentBiasWeight;
+                    gateLayerBiasWeights[currentLayer][neuronInThisLayer]+=biasWeightDelta;
+                    previousGateBiasWeightDeltas[currentLayer][neuronInThisLayer]=biasWeightDelta;
                     for(uint32_t neuronInPreviousLayer=0;neuronInPreviousLayer<neuronsInPreviousLayer;neuronInPreviousLayer++)
                     {
                         // Adjust weight from neuronInPreviousLayer to neuronInThisLayer
-                        gateLayerWeights[currentLayer][neuronInThisLayer][neuronInPreviousLayer]-=learningRate*gateLayerWeightDiffs[currentLayer][neuronInThisLayer][neuronInPreviousLayer];
+                        double currentWeight=gateLayerWeights[currentLayer][neuronInThisLayer][neuronInPreviousLayer];
+                        double previousWeightDelta=previousGateWeightDeltas[currentLayer][neuronInThisLayer][neuronInPreviousLayer];
+                        double weightDelta=(1.0-gateNetworkMomentum)*-gateNetworkLearningRate*gateLayerWeightDiffs[currentLayer][neuronInThisLayer][neuronInPreviousLayer]+gateNetworkMomentum*previousWeightDelta-gateNetworkWeightDecay*currentWeight;
+                        gateLayerWeights[currentLayer][neuronInThisLayer][neuronInPreviousLayer]+=weightDelta;
+                        previousGateWeightDeltas[currentLayer][neuronInThisLayer][neuronInPreviousLayer]=weightDelta;
                     }
                     free(gateLayerWeightDiffs[currentLayer][neuronInThisLayer]);
                 }
                 free(gateLayerBiasWeightDiffs[currentLayer]);
                 free(gateLayerWeightDiffs[currentLayer]);
-                if(gate==4)
-                {
-                    // Final gate; free error terms
-                    free(i_errorTerms[cell][currentLayer]);
-                    free(f_errorTerms[cell][currentLayer]);
-                    free(o_errorTerms[cell][currentLayer]);
-                    free(g_errorTerms[cell][currentLayer]);
-                }
+                free(gateErrorTerms[cell][currentLayer]);
             }
             free(gateLayerBiasWeightDiffs);
             free(gateLayerWeightDiffs);
@@ -635,11 +1017,26 @@ void LSTM::learn(double **desiredOutputs)
         free(o_errorTerms[cell]);
         free(g_errorTerms[cell]);
 
-        latestState->inputGateBiasWeights[cell]-=learningRate*bi_diff[cell];
-        latestState->forgetGateBiasWeights[cell]-=learningRate*bf_diff[cell];
-        latestState->outputGateBiasWeights[cell]-=learningRate*bo_diff[cell];
-        latestState->candidateGateBiasWeights[cell]-=learningRate*bg_diff[cell];
-
+        double previousInputGateValueSumBiasWeightDelta=previousInputGateValueSumBiasWeightDeltas[cell];
+        double previousForgetGateValueSumBiasWeightDelta=previousForgetGateValueSumBiasWeightDeltas[cell];
+        double previousOutputGateValueSumBiasWeightDelta=previousOutputGateValueSumBiasWeightDeltas[cell];
+        double previousCandidateGateValueSumBiasWeightDelta=previousCandidateGateValueSumBiasWeightDeltas[cell];
+        double currentInputGateValueSumBiasWeight=latestState->inputGateValueSumBiasWeights[cell];
+        double currentForgetGateValueSumBiasWeight=latestState->forgetGateValueSumBiasWeights[cell];
+        double currentOutputGateValueSumBiasWeight=latestState->outputGateValueSumBiasWeights[cell];
+        double currentCandidateGateValueSumBiasWeight=latestState->candidateGateValueSumBiasWeights[cell];
+        double inputGateValueSumBiasWeightDelta=(1.0-momentum)*-learningRate*bi_diff[cell]+momentum*previousForgetGateValueSumBiasWeightDelta*-weightDecay*currentInputGateValueSumBiasWeight;
+        double forgetGateValueSumBiasWeightDelta=(1.0-momentum)*-learningRate*bf_diff[cell]+momentum*previousInputGateValueSumBiasWeightDelta-weightDecay*currentForgetGateValueSumBiasWeight;
+        double outputGateValueSumBiasWeightDelta=(1.0-momentum)*-learningRate*bo_diff[cell]+momentum*previousOutputGateValueSumBiasWeightDelta-weightDecay*currentOutputGateValueSumBiasWeight;
+        double candidateGateValueSumBiasWeightDelta=(1.0-momentum)*-learningRate*bg_diff[cell]+momentum*previousCandidateGateValueSumBiasWeightDelta-weightDecay*currentCandidateGateValueSumBiasWeight;
+        latestState->inputGateValueSumBiasWeights[cell]+=inputGateValueSumBiasWeightDelta;
+        latestState->forgetGateValueSumBiasWeights[cell]+=forgetGateValueSumBiasWeightDelta;
+        latestState->outputGateValueSumBiasWeights[cell]+=outputGateValueSumBiasWeightDelta;
+        latestState->candidateGateValueSumBiasWeights[cell]+=candidateGateValueSumBiasWeightDelta;
+        previousInputGateValueSumBiasWeightDeltas[cell]=forgetGateValueSumBiasWeightDelta;
+        previousForgetGateValueSumBiasWeightDeltas[cell]=inputGateValueSumBiasWeightDelta;
+        previousOutputGateValueSumBiasWeightDeltas[cell]=outputGateValueSumBiasWeightDelta;
+        previousCandidateGateValueSumBiasWeightDeltas[cell]=candidateGateValueSumBiasWeightDelta;
     }
 
     free(i_errorTerms);

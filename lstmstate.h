@@ -39,10 +39,10 @@ public:
     double *inputGateValues;
     double *outputGateValues;
     double *candidateGateValues;
-    double *forgetGateBiasWeights;
-    double *inputGateBiasWeights;
-    double *outputGateBiasWeights;
-    double *candidateGateBiasWeights;
+    double *forgetGateValueSumBiasWeights;
+    double *inputGateValueSumBiasWeights;
+    double *outputGateValueSumBiasWeights;
+    double *candidateGateValueSumBiasWeights;
     double *input;
     double *output;
     double *desiredOutput;
@@ -51,19 +51,25 @@ public:
     uint32_t inputCount;
     uint32_t outputCount;
     uint32_t inputAndOutputCount;
-    uint32_t totalLayerCount;
 
-    uint32_t *hiddenLayerNeuronCounts;
+    uint32_t forgetGateTotalLayerCount;
+    uint32_t inputGateTotalLayerCount;
+    uint32_t outputGateTotalLayerCount;
+    uint32_t candidateGateTotalLayerCount;
 
-    double *bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToCellStates; // bottom_diff_s
-    double *bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToOutputs; // bottom_diff_h
-    double *bottomDerivativesOfLossesFromThisStepOnwardsWithRespectToInputs; // bottom_diff_x
+    uint32_t *forgetGateHiddenLayerNeuronCounts;
+    uint32_t *inputGateHiddenLayerNeuronCounts;
+    uint32_t *outputGateHiddenLayerNeuronCounts;
+    uint32_t *candidateGateHiddenLayerNeuronCounts;
 
+    double *bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToLastCellStates; // bottom_diff_s
+    double *bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToLastOutputs; // bottom_diff_h
+    double *bottomDerivativesOfLossesFromThisStateUpwardsWithRespectToInputs; // bottom_diff_x
 
     static double sig(double input); // sigmoid function
     static double tanh(double input); // tanh function
 
-    LSTMState(LSTMState *copyFrom=0,uint32_t _inputCount=0,uint32_t _outputCount=0,uint32_t _hiddenLayerCount=0,uint32_t *_hiddenLayerNeuronCounts=0);
+    LSTMState(LSTMState *copyFrom=0,uint32_t _inputCount=0,uint32_t _outputCount=0,uint32_t _forgetGateHiddenLayerCount=0,uint32_t *_forgetGateHiddenLayerNeuronCounts=0,uint32_t _inputGateHiddenLayerCount=0,uint32_t *_inputGateHiddenLayerNeuronCounts=0,uint32_t _outputGateHiddenLayerCount=0,uint32_t *_outputGateHiddenLayerNeuronCounts=0,uint32_t _candidateGateHiddenLayerCount=0,uint32_t *_candidateGateHiddenLayerNeuronCounts=0);
     void calculateGatePreValues(double *previousOutputs); // Takes "input" and calculates the values to be multiplied by the weights of the gates (in single-layer LSTM: inputGateWeights[cell][i]*input[i]; here: inputGatePreValues[cell][i]).
     void freeMemory();
     ~LSTMState();
